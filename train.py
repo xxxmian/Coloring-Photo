@@ -30,12 +30,12 @@ parser.add_argument('--outputChannelSize', type=int,
                     default=3, help='size of the output channels')
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
-parser.add_argument('--epoches', type=int, default=400, help='number of epochs to train for')
+parser.add_argument('--epoches', type=int, default=100, help='number of epochs to train for')
 parser.add_argument('--lrD', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--lrG', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--annealStart', type=int, default=0, help='annealing learning rate start to')
-parser.add_argument('--annealEvery', type=int, default=400, help='epoch to reaching at learning rate of 0')
-parser.add_argument('--lambdaGAN', type=float, default=1, help='lambdaGAN')
+parser.add_argument('--annealEvery', type=int, default=100, help='epoch to reaching at learning rate of 0')
+parser.add_argument('--lambdaGAN', type=float, default=3, help='lambdaGAN')
 parser.add_argument('--lambdaIMG', type=float, default=0.1, help='lambdaIMG')
 parser.add_argument('--poolSize', type=int, default=50,
                     help='Buffer size for storing previously generated samples from G')
@@ -60,14 +60,11 @@ torch.cuda.manual_seed_all(opt.manualSeed)
 
 
 # get dataloader
-dataloader = getLoader(opt.dataroot,opt.batchSize, opt.workers,
-                       mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
-valDataloader = getLoader(opt.valDataroot, opt.valBatchSize, opt.workers,
-                          mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+dataloader = getLoader(opt.dataroot,opt.batchSize, opt.workers,mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+valDataloader = getLoader(opt.valDataroot, opt.valBatchSize, opt.workers,mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
 
 # get logger
 trainLogger = open('%s/train.log' % opt.exp, 'w')
-
 ngf = opt.ngf
 ndf = opt.ndf
 inputChannelSize = opt.inputChannelSize
@@ -116,14 +113,18 @@ val_target, val_input = val_target.cuda(), val_input.cuda()
 
 
 # get randomly sampled validation images and save it
+
+
 val_iter = iter(valDataloader)
-data_val = val_iter.next()
+data_val = next(val_iter)
+
 val_input_cpu, val_target_cpu = data_val
 val_target_cpu, val_input_cpu = val_target_cpu.cuda(), val_input_cpu.cuda()
 val_target.resize_as_(val_target_cpu).copy_(val_target_cpu)
 val_input.resize_as_(val_input_cpu).copy_(val_input_cpu)
 vutils.save_image(val_target, '%s/real_target.png' % opt.exp, normalize=True)
 vutils.save_image(val_input, '%s/real_input.png' % opt.exp, normalize=True)
+
 
 # get optimizer
 optimizerD = optim.Adam(netD.parameters(), lr=opt.lrD, betas=(opt.beta1, 0.999), weight_decay=opt.wd)
@@ -133,11 +134,15 @@ optimizerG = optim.Adam(netG.parameters(), lr=opt.lrG, betas=(opt.beta1, 0.999),
 ganIterations = 0
 label_d = torch.FloatTensor(opt.batchSize).cuda()
 label_d = Variable(label_d)
+
+
 for epoch in range(opt.epoches):
+   
     if epoch > opt.annealStart:
         adjust_learning_rate(optimizerD, opt.lrD, epoch, None, opt.annealEvery)
         adjust_learning_rate(optimizerG, opt.lrG, epoch, None, opt.annealEvery)
     for i, data in enumerate(dataloader):
+        
         input_gray, target_rgb = data
         batch_size = input_gray.size(0)
         target_rgb, input_gray = Variable(target_rgb.cuda()), Variable(input_gray.cuda())
@@ -177,7 +182,7 @@ for epoch in range(opt.epoches):
         # compute L_L1 (eq.(4) in the paper
         L_img_ = criterionCAE(x_hat, target_rgb)
         L_img = lambdaIMG * L_img_
-        if lambdaIMG <> 0:
+        if lambdaIMG != 0:
             # L_img.backward(retain_graph=True) # in case of current version of pytorch
             L_img.backward(retain_graph=True)
 
@@ -186,7 +191,7 @@ for epoch in range(opt.epoches):
         output = netD(torch.cat([x_hat, input_gray], 1))
         errG_ = criterionBCE(output, label_d)
         errG = lambdaGAN * errG_
-        if lambdaGAN <> 0:
+        if lambdaGAN != 0:
             errG.backward()
         D_G_z2 = output.data.mean()
 
@@ -196,12 +201,13 @@ for epoch in range(opt.epoches):
         if ganIterations % opt.display == 0:
             print('[%d/%d][%d/%d] L_D: %f L_img: %f L_G: %f D(x): %f D(G(z)): %f / %f'
                   % (epoch, opt.epoches, i, len(dataloader),
-                     errD.data[0].item(), L_img.data[0].item(), errG.data[0].item(), D_x, D_G_z1, D_G_z2))
+                     errD.item(), L_img.item(), errG.item(), D_x, D_G_z1, D_G_z2))
 
             sys.stdout.flush()
             trainLogger.write('%d\t%f\t%f\t%f\t%f\t%f\t%f\n' % \
-                              (i, errD.data[0].item(), errG.data[0].item(), L_img.data[0].item(), D_x, D_G_z1, D_G_z2))
+                              (i, errD.item(), errG.item(), L_img.item(), D_x, D_G_z1, D_G_z2))
             trainLogger.flush()
+        
         if ganIterations % opt.evalIter == 0:
             
             netG.eval()
@@ -214,14 +220,17 @@ for epoch in range(opt.epoches):
                     val_batch_output[idx, :, :, :].copy_(x_hat_val.data[0])
             netG.train()
             
-            '''
-            val_batch_output = netG(val_input)
-            '''
+            
+            #val_batch_output = netG(val_input)
+            
             vutils.save_image(val_batch_output, '%s/generated_epoch_%d_iter_%d.png' % \
                               (opt.exp, epoch, ganIterations), normalize=True)
             
-
+        
     # do checkpointing
-    torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.exp, epoch))
-    torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (opt.exp, epoch))
+    if epoch % 10==0:
+        torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.exp, epoch))
+        torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (opt.exp, epoch))
 trainLogger.close()
+
+
